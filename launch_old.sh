@@ -1,15 +1,10 @@
-export INPUT_PENALTY=1
-export INPUT_PENALTY=ON
-export INPUT_PENALTY=TRUE
-
-export PYTHONPATH="/mnt/afs/jiayi/code/lightllm-dev:$PYTHONPATH"
-echo $INPUT_PENALTY 
+export PYTHONPATH="/mnt/afs/yangdeyu/dependency/lightllm-dev:$PYTHONPATH"
 
 python -m lightllm.server.api_server \
     --run_mode normal \
     --model_dir /mnt/afs/share/llava_ckpt_404 \
     --max_req_total_len 8192 \
-    --max_total_token_num 40960 \
+    --max_total_token_num 60000 \
     --cache_capacity 12000 \
     --mode triton_gqa_flashdecoding \
     --data_type bf16 \

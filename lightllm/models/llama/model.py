@@ -140,7 +140,8 @@ class LlamaTpPartModel(TpPartBaseModel):
         elif scaling_type == "mrope":
             self._init_to_get_mrope_rotary()
         else:
-            raise ValueError(f"Unknown RoPE scaling type {scaling_type}")
+            self._init_to_get_rotary()
+            # raise ValueError(f"Unknown RoPE scaling type {scaling_type}")
         return
 
     def _init_weights(self):

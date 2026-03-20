@@ -79,7 +79,6 @@ class MMWeightTpl(BaseWeightTpl):
 
     def _process_weight(self, weight) -> None:
         if self.quant_method is not None and not self.quantized_weight:
-            # print("data type", self.data_type_, weight.device, weight.dtype)
             self.weight = self.quant_method.quantize(weight.to(self.data_type_).cuda(get_current_device_id()))
             return
         # 让 k dim 更连续，大多数split k 算法的算子可能能更快
