@@ -386,6 +386,17 @@ def make_argument_parser() -> argparse.ArgumentParser:
         help="embed cache for swap multimodal data in llm and vit, whisper. 4G is default",
     )
     parser.add_argument(
+        "--enable_concurrent_alloc",
+        action="store_true",
+        help="alloc multimodal resources in threadpool to save time",
+    )
+    parser.add_argument(
+        "--concurrent_alloc_workers",
+        type=int,
+        default=4,
+        help="max concurrent alloc workers",
+    )
+    parser.add_argument(
         "--data_type",
         type=str,
         choices=["fp16", "float16", "bf16", "bfloat16", "fp32", "float32"],
@@ -520,7 +531,7 @@ def make_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--sampling_backend",
         type=str,
-        choices=["triton", "sglang_kernel"],
+        choices=["triton", "triton_top_kp", "sglang_kernel"],
         default="triton",
         help="""sampling used impl. 'triton' is use torch and triton kernel,
         sglang_kernel use sglang_kernel impl""",
@@ -657,5 +668,15 @@ def make_argument_parser() -> argparse.ArgumentParser:
         help="""Whether to enable triton implementation for the op.
         If the op is not implemented for the platform and the hardware support triton,
         it will use triton implementation.""",
+    )
+    parser.add_argument(
+        "--enable_multimodal",
+        action="store_true",
+        help="Whether or not to allow to load additional visual models.",
+    )
+    parser.add_argument(
+        "--enable_multimodal_audio",
+        action="store_true",
+        help="Whether or not to allow to load additional audio models (requird --enable_multimodal).",
     )
     return parser

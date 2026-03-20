@@ -14,6 +14,7 @@ from lightllm.models.internlm2_reward.model import Internlm2RewardTpPartModel
 from lightllm.models.mistral.model import MistralTpPartModel
 from lightllm.models.minicpm.model import MiniCPMTpPartModel
 from lightllm.models.llava.model import LlavaTpPartModel
+from lightllm.models.llavaqwen_avgpool.model import LlavaQwen2TpPartModel
 from lightllm.models.qwen_vl.model import QWenVLTpPartModel
 from lightllm.models.gemma_2b.model import Gemma_2bTpPartModel
 from lightllm.models.phi3.model import Phi3TpPartModel

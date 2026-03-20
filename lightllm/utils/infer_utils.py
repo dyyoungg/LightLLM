@@ -3,7 +3,7 @@ import torch.distributed as dist
 
 import time
 from typing import Callable
-
+import functools
 from lightllm.utils.log_utils import init_logger
 
 logger = init_logger(__name__)
@@ -98,5 +98,37 @@ def post_empty_cache(func):
         result = func(*args, **kwargs)
         torch.cuda.empty_cache()
         return result
+
+    return wrapper
+
+
+def calculate_cpu_time_sync(show=False):
+    def wrapper(func):
+        @functools.wraps(func)
+        def inner_func(*args, **kwargs):
+            start_time = time.time()
+            result = func(*args, **kwargs)
+            cost_time = (time.time() - start_time) * 1000
+            if show:
+                logger.debug(f"Function {func.__name__} took {cost_time} ms to run.")
+            return result
+
+        return inner_func
+
+    return wrapper
+
+
+def calculate_cpu_time_async(show=False):
+    def wrapper(func):
+        @functools.wraps(func)
+        async def inner_func(*args, **kwargs):
+            start_time = time.time()
+            result = await func(*args, **kwargs)
+            cost_time = (time.time() - start_time) * 1000
+            if show:
+                logger.debug(f"Async Function {func.__name__} took {cost_time} ms to run.")
+            return result
+
+        return inner_func
 
     return wrapper

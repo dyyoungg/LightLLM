@@ -3,16 +3,25 @@ import json
 import rpyc
 import librosa
 import numpy as np
+import types
 import torch
+from torch import nn
 import torch.nn.functional as F
 from io import BytesIO
 from typing import List, Union
 from safetensors.torch import load_file
+from torch.nn.utils.rnn import pad_sequence
+from whisper.audio import pad_or_trim, log_mel_spectrogram
 from transformers.processing_utils import ProcessorMixin
 from lightllm.server.embed_cache.utils import read_shm, get_shm_name_data
 from lightllm.server.multimodal_params import AudioItem
 from rpyc.utils.classic import obtain
 from lightllm.server.embed_cache.embed_cache_client import CpuEmbedCacheClient
+import concurrent.futures
+import pickle
+from lightllm.utils.infer_utils import calculate_cpu_time_sync
+from lightllm.models.whisper.modeling_whisper import WhisperModel
+
 
 # tokenizer_class removed
 class WhisperProcessor(ProcessorMixin):
@@ -84,9 +93,58 @@ class WhisperProcessor(ProcessorMixin):
         return self.tokenizer.get_prompt_ids(text, return_tensors=return_tensors)
 
 
+class AudioConvUpScaleProjector(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.hidden_size = config.hidden_size
+        self.audio_hidden_size = config.audio_hidden_size
+        self.afeat_1d_conv = nn.Conv1d(
+            in_channels=config.audio_hidden_size,
+            out_channels=config.audio_hidden_size,
+            kernel_size=2,
+            stride=2,
+            padding=0,
+        )  # 50Hz -> 25Hz
+        self.compress_ratio = config.audio_downsample_ratio // 2  # conv已经压缩了2倍
+        self.linear1 = nn.Linear(
+            int(self.audio_hidden_size * self.compress_ratio),
+            self.hidden_size,
+            bias=True,
+        )
+        self.gelu = nn.GELU()
+        self.linear2 = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
+
+    def forward(self, x, feature_length):
+        # x: [bs, seq_len, audio_hidden_size]
+        # feature length: List[int]
+
+        x = self.afeat_1d_conv(x.transpose(1, 2)).transpose(
+            1, 2
+        )  # Process Whisper features with 1D conv: (B x T x D) -> (B x T//2 x D')
+        bs, seq_len, audio_hidden_size = x.size()
+
+        target_seq_len = (seq_len + self.compress_ratio - 1) // self.compress_ratio * self.compress_ratio
+        pad_len = target_seq_len - seq_len
+
+        if pad_len > 0:
+            pad_tensor = torch.zeros(bs, pad_len, audio_hidden_size, device=x.device, dtype=x.dtype)
+            x = torch.cat([x, pad_tensor], dim=1)  # 在时间维度 padding
+
+        new_seq_len = target_seq_len // self.compress_ratio
+        x = x.reshape(bs, new_seq_len, audio_hidden_size * self.compress_ratio)
+        x = self.linear1(x)
+        x = self.gelu(x)
+        x = self.linear2(x)
+        compress_ratio = self.config.audio_downsample_ratio
+        num_tokens = [(cur_l + compress_ratio - 1) // compress_ratio for cur_l in feature_length]
+        return x, num_tokens
+
+
 class WhisperAudioModel:
     def __init__(self, kvargs):
         self.max_seconds = 30
+        self.mel_bins = 128
         self.sampling_rate = 16000
         self.max_length = self.max_seconds * self.sampling_rate
         self.cache_port = kvargs["cache_port"]
@@ -96,21 +154,25 @@ class WhisperAudioModel:
             self.data_type = torch.bfloat16
         else:
             self.data_type = torch.float16
+        self.audio_projector_dtype = torch.float32
+        self.thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
     def cuda(self):
-        self.audio = self.audio.cuda()
-        for k, v in self.projector_weights.items():
-            self.projector_weights[k] = v.cuda()
+        self.audio_model = self.audio_model.cuda()
+        self.audio_projector = self.audio_projector.cuda()
         self.device = torch.device("cuda")
         return self
 
     def load_model(self, weight_dir, config):
-        self.audio_processor = WhisperProcessor.from_pretrained(weight_dir)
-        from lightllm.models.whisper.modeling_whisper import WhisperEncoder, WhisperConfig
+        # self.audio_processor = WhisperProcessor.from_pretrained(weight_dir)
+        # from lightllm.models.whisper.modeling_whisper import WhisperEncoder, WhisperConfig
+        if isinstance(config, dict):
+            config = types.SimpleNamespace(**config)
+        self.audio_model = WhisperModel.from_pretrained(config.audio_encoder).encoder.to(self.data_type)
+        self.audio_projector = AudioConvUpScaleProjector(config).to(self.audio_projector_dtype)
 
-        self.audio = WhisperEncoder(WhisperConfig(**config["audio_config"])).to(self.data_type)
-        self.device = torch.device("cpu")
-        self.projector_weights = {}
+        # self.device = torch.device("cpu")
+        # self.projector_weights = {}
         self.load_weight(weight_dir)
 
     def load_weight(self, weight_dir):
@@ -118,49 +180,45 @@ class WhisperAudioModel:
         weight_map = json.load(open(weight_path, "r"))["weight_map"]
         params_map = {}
         audio_weight = {}
+        audio_projector_weight = {}
+
         for k, v in weight_map.items():
-            if "mlp2" not in k and "audio_model" not in k:
+
+            if "audio_encoder" not in k and "audio_projector" not in k:
                 continue
+
             filename = weight_map[k]
             if filename not in params_map:
                 tensor_data = load_file(os.path.join(weight_dir, filename))
                 params_map[filename] = tensor_data
-            if "mlp2" in k:
-                self.projector_weights[k] = params_map[filename][k].to(self.data_type)
-            if "audio_model" in k:
-                audio_weight[k[len("audio_model.encoder.") :]] = params_map[filename][k].to(self.data_type)
+            if "audio_projector" in k:
+                audio_projector_weight[k.replace("model.audio_projector.", "")] = params_map[filename][k].to(
+                    self.data_type
+                )
 
-        self.audio.load_state_dict(audio_weight)
+            elif "audio_encoder" in k:
+                audio_weight[k.replace("model.audio_encoder.model.", "")] = params_map[filename][k].to(self.data_type)
 
-        assert "mlp2.0.bias" in self.projector_weights
-        assert "mlp2.0.weight" in self.projector_weights
-        assert "mlp2.1.bias" in self.projector_weights
-        assert "mlp2.1.weight" in self.projector_weights
-        assert "mlp2.3.bias" in self.projector_weights
-        assert "mlp2.3.weight" in self.projector_weights
+        self.audio_model.load_state_dict(audio_weight)
+        self.audio_projector.load_state_dict(audio_projector_weight)
 
-    def forward(self, audio_values, audio_lens_after_cnn):
-        audio_values = audio_values.to(self.data_type).to(device=self.device)
-        audio_values = audio_values.squeeze(1)
-        audio_lens_after_cnn = torch.tensor(audio_lens_after_cnn).cuda()
-        max_len_in_batch = torch.max(audio_lens_after_cnn).item()
+    @torch.no_grad()
+    def forward(self, batch_audios, audio_lens):
+        # batch audios : List[np.ndarray]
+        # audio length: List[int]
 
-        padding_mask = torch.ones([audio_values.size(0), max_len_in_batch]).to(
-            dtype=audio_values.dtype, device=audio_values.device
-        )
-        for index in range(len(audio_values)):
-            padding_mask[index, : audio_lens_after_cnn[index].item()] = 0
-        last_hidden_state = self.audio(audio_values, padding_mask, audio_lens_after_cnn).last_hidden_state
-        x = F.layer_norm(
-            last_hidden_state,
-            normalized_shape=(last_hidden_state.shape[-1],),
-            weight=self.projector_weights["mlp2.0.weight"],
-            bias=self.projector_weights["mlp2.0.bias"],
-        )
-        x = F.linear(x, weight=self.projector_weights["mlp2.1.weight"], bias=self.projector_weights["mlp2.1.bias"])
-        x = F.gelu(x)
-        x = F.linear(x, weight=self.projector_weights["mlp2.3.weight"], bias=self.projector_weights["mlp2.3.bias"])
-        return x
+        batch_audios = [torch.tensor(a) if not isinstance(a, torch.Tensor) else a for a in batch_audios]
+        padded_audio = pad_sequence(batch_audios, batch_first=True, padding_value=0)
+        audio = pad_or_trim(padded_audio)
+        mel = log_mel_spectrogram(audio, n_mels=self.mel_bins)
+
+        mel = mel.to(self.data_type).to(device=self.device)
+        audio_features = self.audio_model(mel).last_hidden_state
+        audio_features = audio_features.to(self.audio_projector_dtype)
+
+        audio_features, feature_len = self.audio_projector(audio_features, audio_lens)
+
+        return audio_features, feature_len
 
     def encode(self, audio_items: List[AudioItem], cpu_embed_cache_client: CpuEmbedCacheClient):
         # 每个元素是一个chunk
@@ -200,29 +258,28 @@ class WhisperAudioModel:
 
                     start = end
             else:
+                # min len <audio len < max len
                 batch_audio_lens.append(min(audio.shape[0], self.max_length))
                 batch_audios.append(audio)
                 chunk_owner_index.append(i)
 
-        batch_audio_lens = np.array(batch_audio_lens, dtype=np.int32)
-
-        audios, audio_lens_after_cnn = self.audio_processor(
-            batch_audios, batch_audio_lens, sampling_rate=16000, return_tensors="pt"
-        )
-        audios = self.forward(audios, audio_lens_after_cnn)
-        audio_lens_after_cnn = np.array(audio_lens_after_cnn, dtype=np.int32)
-        audio_token_num = (audio_lens_after_cnn - 2) // 2 + 1
+        audio_lens_after_cnn = [len(audio) // 320 for audio in batch_audios]
+        chunk_embeds, audio_token_num = self.forward(batch_audios, audio_lens_after_cnn)
 
         num_audios = len(audio_items)
+
         per_audio_embeds = [[] for _ in range(num_audios)]
 
         for chunk_idx, owner in enumerate(chunk_owner_index):
             token_len = int(audio_token_num[chunk_idx])
             if token_len <= 0:
                 continue
-            per_audio_embeds[owner].append(audios[chunk_idx][:token_len])
+            # 切割出有效 token，剔除 padding 的部分
+            per_audio_embeds[owner].append(chunk_embeds[chunk_idx][:token_len])
 
-        ready_audio = obtain(self.cache_client.root.get_items_embed(uuids))
+        embed_status = self.cache_client.root.get_items_embed_v2(pickle.dumps(uuids))
+        ready_audio = pickle.loads(embed_status)
+
         ids_to_set = []
         for i, ready in enumerate(ready_audio):
             if ready:
@@ -239,5 +296,6 @@ class WhisperAudioModel:
             ids_to_set.append(uid)
 
         if ids_to_set:
-            self.cache_client.root.set_items_embed(ids=ids_to_set)
+            self.cache_client.root.set_items_embed_v2(pickle.dumps(ids_to_set))
+
             torch.cuda.current_stream().synchronize()

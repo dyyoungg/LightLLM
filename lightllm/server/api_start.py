@@ -88,6 +88,11 @@ def normal_or_p_d_start(args):
         else:
             args.disable_audio = True
 
+    if args.enable_multimodal_audio:
+        args.disable_audio = False
+
+    print("disbale vision:", args.disable_vision, "disable audio:", args.disable_audio)
+
     # pd 分离模式下，不启动多模态的模块
     if args.run_mode in ["decode", "nixl_decode"]:
         args.disable_audio = True

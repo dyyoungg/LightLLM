@@ -153,6 +153,7 @@ def has_vision_module(model_path: str) -> bool:
         from transformers.configuration_utils import PretrainedConfig
 
         model_cfg, _ = PretrainedConfig.get_config_dict(model_path)
+        print(model_cfg)
         model_type = model_cfg["model_type"]
         if model_type == "qwen":
             # QWenVisionTransformer
@@ -175,6 +176,8 @@ def has_vision_module(model_path: str) -> bool:
             return True
         elif model_type == "llava":
             # LlavaVisionModel
+            return True
+        elif model_type == "llavaqwen2":
             return True
         elif model_type == "internvl_chat":
             return True

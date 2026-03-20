@@ -107,7 +107,9 @@ class AudioManager:
                     if disable_prompt_cache:
                         ready_audio = [False] * len(audio_uuids)
                     else:
-                        ready_audio = obtain(self.cache_client.root.get_items_embed(audio_uuids))
+                        ready_audio = self.cache_client.root.get_items_embed_v2(pickle.dumps(audio_uuids))
+                        ready_audio = pickle.loads(ready_audio)
+                        # ready_audio = obtain(self.cache_client.root.get_items_embed(audio_uuids))
 
                     for audio, ready in zip(multimodal_params.audios, ready_audio):
                         if not ready:

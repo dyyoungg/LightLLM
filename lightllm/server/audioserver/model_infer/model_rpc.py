@@ -1,3 +1,6 @@
+import os
+import json
+import types
 import asyncio
 import rpyc
 import torch
@@ -19,15 +22,19 @@ class AudioModelRpcServer(rpyc.Service):
         graceful_registry(inspect.currentframe().f_code.co_name)
 
         weight_dir = kvargs["weight_dir"]
-        model_cfg, _ = PretrainedConfig.get_config_dict(weight_dir)
+        # model_cfg, _ = PretrainedConfig.get_config_dict(weight_dir)
+        config_path = os.path.join(weight_dir, "config.json")
+        with open(config_path, "r") as f:
+            model_cfg = json.load(f)
+
         if model_cfg.get("thinker_config") is not None:
             model_cfg = model_cfg["thinker_config"]
 
-        audio_config = model_cfg["audio_config"]
+        audio_config = model_cfg.get("audio_config", {})
 
         model_kvargs = {"cache_port": kvargs["cache_port"], "data_type": kvargs["data_type"]}
         try:
-            self.model_type = audio_config["model_type"]
+            self.model_type = audio_config.get("model_type", "whisper")
             if self.model_type == "clap_audio_model" or self.model_type == "whisper":
                 self.model = WhisperAudioModel(model_kvargs)
             elif self.model_type == "qwen3_omni_moe_audio_encoder":
@@ -47,6 +54,7 @@ class AudioModelRpcServer(rpyc.Service):
                 create_meta_data=False,
                 init_shm_data=False,
             )
+            print("########### successful load audio encoder!!")
         except Exception as e:
             print("#" * 16)
             print("load model error:", str(e), e, type(e))

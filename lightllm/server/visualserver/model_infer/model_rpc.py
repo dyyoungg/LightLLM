@@ -11,6 +11,9 @@ from rpyc.utils.classic import obtain
 from rpyc.utils.server import ThreadedServer
 from lightllm.models.qwen_vl.qwen_visual import QWenVisionTransformer
 from lightllm.models.llava.llava_visual import LlavaVisionModel
+from lightllm.models.llavaqwen_avgpool.llava_visual_qwen25vl import (
+    LlavaQwen25AvgpoolVisionModelAnyRes,
+)
 from lightllm.models.internvl.internvl_visual import InternVLVisionModel
 from lightllm.models.gemma3.gemma3_visual import Gemma3VisionModel
 from lightllm.models.vit.model import VisionTransformer
@@ -26,6 +29,7 @@ from lightllm.utils.graceful_utils import graceful_registry
 from lightllm.utils.envs_utils import get_env_start_args
 from lightllm.server.embed_cache.embed_cache_client import CpuEmbedCacheClient
 from lightllm.server.visualserver import set_vit_att_backend
+import pickle
 
 
 class VisualModelRpcServer(rpyc.Service):
@@ -76,6 +80,8 @@ class VisualModelRpcServer(rpyc.Service):
                 self.model = TarsierVisionTransformerPretrainedModel(**model_cfg).eval().bfloat16()
             elif self.model_type == "llava":
                 self.model = LlavaVisionModel()
+            elif self.model_type == "llavaqwen2":
+                self.model = LlavaQwen25AvgpoolVisionModelAnyRes()
             elif self.model_type == "internvl_chat":
                 self.model = VisionTransformer(kvargs)
                 # self.model = InternVLVisionModel()
@@ -96,6 +102,7 @@ class VisualModelRpcServer(rpyc.Service):
             self.model.load_model(weight_dir)
             self.model = self.model.cuda()
             self.cpu_embed_cache_client = CpuEmbedCacheClient(create_meta_data=False, init_shm_data=False)
+            print("########### successful load vision model!!")
         except Exception as e:
             print("#" * 16)
             print("load model error:", str(e), e, type(e))
@@ -119,7 +126,8 @@ class VisualModelRpcServer(rpyc.Service):
         all_img_embeds = all_img_embeds.to(torch.device("cuda"))
 
         if self.tp_rank_id == 0:
-            ready_flags = obtain(self.cache_client.root.get_items_embed(uuids))
+            ready_flags_status = self.cache_client.root.get_items_embed_v2(pickle.dumps(uuids))
+            ready_flags = pickle.loads(ready_flags_status)
             ids_to_set = []
             for i, ready in enumerate(ready_flags):
                 if ready:
@@ -132,7 +140,9 @@ class VisualModelRpcServer(rpyc.Service):
                 )
                 ids_to_set.append(uid)
             if ids_to_set:
-                self.cache_client.root.set_items_embed(ids_to_set)
+                ids_to_set = pickle.dumps(ids_to_set)
+                self.cache_client.root.set_items_embed_v2(ids_to_set)
+                # self.cache_client.root.set_items_embed(ids_to_set)
                 torch.cuda.current_stream().synchronize()
         return
 
