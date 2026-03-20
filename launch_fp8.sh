@@ -3,6 +3,7 @@ set -x
 
 export PATH="/opt/conda/bin:$PATH"
 which gunicorn
+export RMSNORM_WARPS=4
 
 /usr/bin/env /opt/conda/bin/python -m lightllm.server.api_server \
     --run_mode normal \

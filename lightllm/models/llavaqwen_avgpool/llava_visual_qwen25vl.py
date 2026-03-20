@@ -32,9 +32,6 @@ from lightllm.models.llavaqwen_avgpool.avgpool import (
 )
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VisionTransformerPretrainedModel,
-    Qwen2_5_VisionPatchEmbed,
-    apply_rotary_pos_emb_flashatt,
-    Qwen2_5_VLVisionFlashAttention2,
     Qwen2RMSNorm,
 )
 from transformers.models.qwen2_5_vl.configuration_qwen2_5_vl import Qwen2_5_VLConfig

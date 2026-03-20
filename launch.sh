@@ -5,12 +5,13 @@ export INPUT_PENALTY=TRUE
 export PYTHONPATH="/mnt/afs/jiayi/code/lightllm-dev:$PYTHONPATH"
 echo $INPUT_PENALTY 
 
-python -m lightllm.server.api_server \
+model_path=$1
+LIGHTLLM_TRITON_AUTOTUNE_LEVEL=1 LOADWORKER=8 python -m lightllm.server.api_server \
     --run_mode normal \
-    --model_dir /mnt/afs/share/llava_ckpt_404 \
-    --max_req_total_len 8192 \
-    --max_total_token_num 40960 \
-    --cache_capacity 12000 \
+    --model_dir $model_path \
+    --max_req_total_len 32000 \
+    --max_total_token_num 50000 \
+    --cache_capacity 1200 \
     --mode triton_gqa_flashdecoding \
     --data_type bf16 \
     --port 18003 \
@@ -18,7 +19,7 @@ python -m lightllm.server.api_server \
     --trust_remote_code \
     --host 0.0.0.0 \
     --use_dynamic_prompt_cache \
-    --tp 1 \
+    --tp 8 \
     --nccl_port 28765 \
     --mem_fraction 0.9 \
     --graph_max_batch_size 32 \
