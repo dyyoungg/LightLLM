@@ -99,11 +99,14 @@ class FP8w8a8g128QuantizationMethod(_BaseQuantizationMethod):
             else:
                 out = torch.empty((m, n), dtype=input_tensor.dtype, device=input_tensor.device)
 
-        from lightllm.common.basemodel.triton_kernel.quantization.scaled_mm_per_token_group_quant_kernel import (
+        # from lightllm.common.basemodel.triton_kernel.quantization.scaled_mm_per_token_group_quant_kernel import (
+        #     scaled_mm_act_per_group_w_perchannel,
+        # )
+        from lightllm.common.basemodel.triton_kernel.quantization.scaled_mm_per_token_group_quant_kernel_bias import (
             scaled_mm_act_per_group_w_perchannel,
         )
 
-        assert bias is None, "Bias addition is not supported in fp8w8a8g128 quantization method for now"
+        # assert bias is None, "Bias addition is not supported in fp8w8a8g128 quantization method for now"
         out = scaled_mm_act_per_group_w_perchannel(
             A=x_q,
             B=qweight,
@@ -111,6 +114,7 @@ class FP8w8a8g128QuantizationMethod(_BaseQuantizationMethod):
             Bscale=weight_scale,
             act_quant_group_size=self.act_quant_group_size,
             out=out,
+            bias=bias
         )
         return out
 

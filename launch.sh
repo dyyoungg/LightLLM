@@ -1,13 +1,14 @@
 
-export PYTHONPATH="/mnt/afs/yangdeyu/dependency/lightllm-dev:$PYTHONPATH"
+export PYTHONPATH="/mnt/afs/yangdeyu/dependency/lightllm-dev2:$PYTHONPATH"
+export PATH="/opt/conda/bin:$PATH"
+which gunicorn
 
-
-python -m lightllm.server.api_server \
+/usr/bin/env /opt/conda/bin/python -m lightllm.server.api_server \
     --run_mode normal \
-    --model_dir /mnt/afs/jiayi/code/LLaVA_hub/ckpt/20260305_beebee_32B_no_caption_aug_v2_search_silence_system1 \
+    --model_dir /mnt/afs/share/20260305_beebee_32B_no_caption_aug_v2_search_silence_system1 \
     --max_req_total_len 8192 \
-    --max_total_token_num 30000 \
-    --cache_capacity 12000 \
+    --max_total_token_num 20000 \
+    --cache_capacity 8000 \
     --llm_decode_att_backend triton \
     --data_type bf16 \
     --port 18003 \
@@ -26,6 +27,7 @@ python -m lightllm.server.api_server \
     --visual_infer_batch_size 16 \
     --sampling_backend triton_top_kp \
     --enable_concurrent_alloc \
+    --quant_type triton-fp8w8a8g128 \
 
 # /usr/bin/env /mnt/afs/yangdeyu/conda_env/llava_4090/bin/python -m lightllm.server.api_server \
 #     --run_mode normal \
