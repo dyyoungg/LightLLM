@@ -91,15 +91,22 @@ class TpPartBaseModel:
         self._verify_params()
         self._init_quant()
 
+        self._log_cuda_memory("before model buffers and weights")
+
         # 更连续的显存分配可以有更好的性能
         if self.max_total_token_num is None:
             self._init_weights()
+            self._log_cuda_memory("after model weights")
             self._init_mem_manager()
+            self._log_cuda_memory("after kv cache")
         else:
             self._init_mem_manager()
+            self._log_cuda_memory("after kv cache")
             self._init_weights()
+            self._log_cuda_memory("after model weights")
 
         self._init_kv_move_buffer()
+        self._log_cuda_memory("after kv move buffer")
         self._check_mem_size()
         self._init_req_manager()
         self._init_infer_layer()
@@ -114,9 +121,31 @@ class TpPartBaseModel:
         set_model_init_status(True)
         return
 
+    def _log_cuda_memory(self, stage):
+        """Log allocator and driver memory to diagnose startup OOMs."""
+        if not torch.cuda.is_available():
+            return
+        device = torch.cuda.current_device()
+        allocated = torch.cuda.memory_allocated(device) / (1024**3)
+        reserved = torch.cuda.memory_reserved(device) / (1024**3)
+        free, total = torch.cuda.mem_get_info(device)
+        logger.info(
+            "CUDA memory [%s]: allocated=%.2f GiB, reserved=%.2f GiB, "
+            "driver_free=%.2f GiB, driver_used=%.2f GiB, total=%.2f GiB",
+            stage,
+            allocated,
+            reserved,
+            free / (1024**3),
+            (total - free) / (1024**3),
+            total / (1024**3),
+        )
+
     def _init_config(self):
         with open(os.path.join(self.weight_dir_, "config.json"), "r") as json_file:
             self.config = json.load(json_file)
+        from lightllm.common.veomni_utils import normalize_veomni_config
+
+        self.config = normalize_veomni_config(self.config)
         # rename keys
         repair_config(self.config, same_names=["num_attention_heads", "n_head"])
         repair_config(self.config, same_names=["hidden_size", "n_embd", "n_embed"])

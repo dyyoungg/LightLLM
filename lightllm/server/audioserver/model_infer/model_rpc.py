@@ -9,6 +9,7 @@ from transformers.configuration_utils import PretrainedConfig
 from lightllm.models.whisper.whisper_audio import WhisperAudioModel
 from lightllm.server.multimodal_params import AudioItem
 from lightllm.utils.infer_utils import set_random_seed
+from lightllm.common.veomni_utils import normalize_veomni_config
 
 
 class AudioModelRpcServer(rpyc.Service):
@@ -25,6 +26,7 @@ class AudioModelRpcServer(rpyc.Service):
         config_path = os.path.join(weight_dir, "config.json")
         with open(config_path, "r") as f:
             config_dict = json.load(f)
+        config_dict = normalize_veomni_config(config_dict)
         model_cfg = types.SimpleNamespace(**config_dict)
         torch.cuda.set_device(audio_gpu_ids[rank_id])
         model_kvargs = {

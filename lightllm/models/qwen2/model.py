@@ -1,3 +1,5 @@
+import torch
+
 from lightllm.models.registry import ModelRegistry
 from lightllm.models.qwen2.layer_weights.pre_and_post_layer_weight import (
     Qwen2PreAndPostLayerWeight,
@@ -7,6 +9,10 @@ from lightllm.models.qwen2.layer_weights.transformer_layer_weight import (
 )
 from lightllm.models.llama.model import LlamaTpPartModel
 from lightllm.common.mem_utils import select_mem_manager_class
+from lightllm.utils.log_utils import init_logger
+
+
+logger = init_logger(__name__)
 
 
 @ModelRegistry("qwen2")
@@ -48,6 +54,27 @@ class Qwen2TpPartModel(LlamaTpPartModel):
         head_dim_ = self.config["hidden_size"] // self.config["num_attention_heads"]
         head_dim_ = self.config.get("head_dim", head_dim_)
         tp_k_head_num_ = max(self.config["num_key_value_heads"] // self.tp_world_size_, 1)
+        kv_shape = (
+            self.config["num_hidden_layers"],
+            self.max_total_token_num + 1,
+            2 * tp_k_head_num_,
+            head_dim_,
+        )
+        kv_bytes = 1
+        for dim in kv_shape:
+            kv_bytes *= dim
+        kv_bytes *= torch.empty((), dtype=self.data_type).element_size()
+        logger.info(
+            "KV cache plan: shape=%s, dtype=%s, size=%.2f GiB, "
+            "layers=%d, global_kv_heads=%d, tp_kv_heads=%d, head_dim=%d",
+            kv_shape,
+            self.data_type,
+            kv_bytes / (1024**3),
+            self.config["num_hidden_layers"],
+            self.config["num_key_value_heads"],
+            tp_k_head_num_,
+            head_dim_,
+        )
         self.mem_manager = select_mem_manager_class(self.mode)(
             self.max_total_token_num,
             dtype=self.data_type,

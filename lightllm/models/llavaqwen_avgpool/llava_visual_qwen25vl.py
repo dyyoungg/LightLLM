@@ -32,10 +32,14 @@ from lightllm.models.llavaqwen_avgpool.avgpool import (
 )
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VisionTransformerPretrainedModel,
-    Qwen2RMSNorm,
+    Qwen2_5_VLRMSNorm,
 )
 from transformers.models.qwen2_5_vl.configuration_qwen2_5_vl import Qwen2_5_VLConfig
 from lightllm.server.multimodal_params import ImageItem
+from lightllm.common.veomni_utils import (
+    is_veomni_config,
+    normalize_veomni_config,
+)
 
 
 logger = init_logger(__name__)
@@ -45,7 +49,7 @@ class Qwen2_5_VLPatchMerger(nn.Module):
     def __init__(self, context_dim: int, spatial_merge_size: int = 2) -> None:
         super().__init__()
         self.hidden_size = context_dim * (spatial_merge_size ** 2)
-        self.ln_q = Qwen2RMSNorm(context_dim, eps=1e-6)
+        self.ln_q = Qwen2_5_VLRMSNorm(context_dim, eps=1e-6)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.ln_q(x).view(-1, self.hidden_size)
@@ -69,6 +73,7 @@ class LlavaQwen25AvgpoolVisionModelAnyRes:
     def load_model(self, weight_dir):
         config_file = os.path.join(weight_dir, "config.json")
         config = json.load(open(config_file))
+        config = normalize_veomni_config(config)
         config = SimpleNamespace(**config)
         self.load_bin_model(config, weight_dir)
 
@@ -88,7 +93,13 @@ class LlavaQwen25AvgpoolVisionModelAnyRes:
             vision_path = os.path.join(weight_dir, vision_path)
 
         vision_config_path = os.path.join(vision_path, "config.json")
-        vision_config = Qwen2_5_VLConfig.from_json_file(vision_config_path)
+        with open(vision_config_path, "r") as f:
+            vision_config_dict = json.load(f)
+
+        if "vision_config" in vision_config_dict:
+            vision_config = Qwen2_5_VLConfig.from_dict(vision_config_dict).vision_config
+        else:
+            vision_config = Qwen2_5_VLConfig(vision_config=vision_config_dict).vision_config
         vision_config._attn_implementation = "flash_attention_2"
 
         self.mm_downsample_ratio = config.mm_downsample_ratio
@@ -98,7 +109,11 @@ class LlavaQwen25AvgpoolVisionModelAnyRes:
 
         self.vision_tower = Qwen25ViTPretrainedModel._from_config(vision_config).to(torch.bfloat16)  # 精度
 
-        self.spatial_patch_size = vision_config.spatial_patch_size
+        # Transformers calls this field ``patch_size``.  Keep support for the
+        # legacy name used by older local configs.
+        self.spatial_patch_size = getattr(vision_config, "spatial_patch_size", None)
+        if self.spatial_patch_size is None:
+            self.spatial_patch_size = vision_config.patch_size
         self.spatial_merge_size = vision_config.spatial_merge_size
 
         self.mm_projector = Qwen25VLAvgPoolProjector(config)
@@ -106,11 +121,16 @@ class LlavaQwen25AvgpoolVisionModelAnyRes:
         # load projector weights
         self.projector_weights = {}
         self.vision_model_weights = {}
+        veomni_checkpoint = is_veomni_config(vars(config))
         for f in os.listdir(weight_dir):
             if f.endswith(".safetensors"):
                 d = safe_open(os.path.join(weight_dir, f), "pt", "cpu")
                 for k in d.keys():
-                    if "model.mm_projector" in k:
+                    if veomni_checkpoint and k.startswith("image_encoder.mm_projector."):
+                        self.projector_weights[k[len("image_encoder.mm_projector.") :]] = d.get_tensor(k)
+                    elif veomni_checkpoint and k.startswith("image_encoder."):
+                        self.vision_model_weights[k[len("image_encoder.") :]] = d.get_tensor(k)
+                    elif "model.mm_projector" in k:
                         self.projector_weights[k.replace("model.mm_projector.", "")] = d.get_tensor(k)
                     elif "model.vision_tower.vision_tower" in k:
                         self.vision_model_weights[k.replace("model.vision_tower.vision_tower.", "")] = d.get_tensor(k)
@@ -137,6 +157,14 @@ class LlavaQwen25AvgpoolVisionModelAnyRes:
         images_thw_gpu = images_thw.to(device=self.device, dtype=torch.int32, non_blocking=True)
 
         image_embeds = self.vision_tower(images_gpu, images_thw_gpu)
+        # Newer Transformers versions return BaseModelOutputWithPooling from
+        # Qwen2.5-VL's vision tower.  The projector consumes the merged token
+        # tensor, which is exposed as ``pooler_output``; older versions may
+        # return the tensor directly (or a tuple), so keep those forms working.
+        if hasattr(image_embeds, "pooler_output"):
+            image_embeds = image_embeds.pooler_output
+        elif isinstance(image_embeds, (tuple, list)):
+            image_embeds = image_embeds[-1]
         image_embeds = image_embeds.float()
         image_embeds, token_len_list = self.mm_projector(image_embeds, images_thw)
         # image_embeds = image_embeds.float()

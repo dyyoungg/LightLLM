@@ -37,6 +37,7 @@ from lightllm.utils.infer_utils import calculate_time, mark_start, mark_end
 from lightllm.utils.dist_utils import init_vision_distributed_env
 from lightllm.utils.graceful_utils import graceful_registry
 from lightllm.utils.envs_utils import get_env_start_args
+from lightllm.common.veomni_utils import normalize_veomni_config
 
 
 class VisualModelRpcServer(rpyc.Service):
@@ -57,6 +58,7 @@ class VisualModelRpcServer(rpyc.Service):
 
         init_vision_distributed_env(kvargs)
         model_cfg, _ = PretrainedConfig.get_config_dict(weight_dir)
+        model_cfg = normalize_veomni_config(model_cfg)
 
         try:
             kvargs = {

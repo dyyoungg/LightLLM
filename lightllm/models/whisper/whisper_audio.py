@@ -124,7 +124,11 @@ class WhisperAudioModel:
             if filename not in params_map:
                 tensor_data = load_file(os.path.join(weight_dir, filename))
                 params_map[filename] = tensor_data
-            if "audio_projector" in k:
+            if k.startswith("audio_encoder.audio_projector."):
+                audio_projector_weight[k.replace("audio_encoder.audio_projector.", "")] = params_map[filename][k].to(self.data_type)
+            elif k.startswith("audio_encoder.") and not k.startswith("audio_encoder.audio_projector."):
+                audio_weight[k.replace("audio_encoder.", "")] = params_map[filename][k].to(self.data_type)
+            elif "audio_projector" in k:
                 audio_projector_weight[k.replace("model.audio_projector.", "")] = params_map[filename][k].to(self.data_type)
 
             elif "audio_encoder" in k:

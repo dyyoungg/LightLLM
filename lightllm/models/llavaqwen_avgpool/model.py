@@ -126,7 +126,7 @@ class LlavaQWen25AudioVLTokenizer(BaseMultiModalTokenizer):
         return self.encode
 
 
-@ModelRegistry("llavaqwen2", is_multimodal=True)
+@ModelRegistry(["llavaqwen2", "llavaqwen2_omni"], is_multimodal=True)
 class LlavaQwen2TpPartModel(Qwen2TpPartModel):
 
     # infer class

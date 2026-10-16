@@ -5,6 +5,10 @@ from safetensors import safe_open
 from tqdm import tqdm
 import lightllm.utils.petrel_helper as utils
 from lightllm.utils.dist_utils import get_current_device_id
+from lightllm.common.veomni_utils import (
+    is_veomni_config,
+    remap_veomni_weight_key,
+)
 
 
 def load_func(
@@ -13,6 +17,7 @@ def load_func(
     pre_post_layer=None,
     transformer_layer_list=None,
     weight_dir=None,
+    veomni_checkpoint=False,
 ):
     # fix bug for 多线程加载的时候，每个线程内部的cuda device 会切回 0， 修改后来保证不会出现bug
     import torch.distributed as dist
@@ -24,6 +29,11 @@ def load_func(
         weights = {k: weights.get_tensor(k) for k in weights.keys()}
     else:
         weights = utils.PetrelHelper.load(os.path.join(weight_dir, file_), map_location="cpu")
+
+    if veomni_checkpoint:
+        # Remapping only changes dictionary keys; tensor storage is shared, so
+        # this does not duplicate a multi-GiB shard in memory.
+        weights = {remap_veomni_weight_key(k): v for k, v in weights.items()}
 
     if pre_post_layer is not None:
         pre_post_layer.load_hf_weights(weights)
@@ -65,12 +75,18 @@ def load_hf_weights(
     from functools import partial
     from multiprocessing.pool import ThreadPool as Pool
 
+    with open(os.path.join(weight_dir, "config.json"), "r") as f:
+        import json
+
+        veomni_checkpoint = is_veomni_config(json.load(f))
+
     partial_func = partial(
         load_func,
         use_safetensors=use_safetensors,
         pre_post_layer=pre_post_layer,
         transformer_layer_list=transformer_layer_list,
         weight_dir=weight_dir,
+        veomni_checkpoint=veomni_checkpoint,
     )  # noqa
     worker = int(os.environ.get("LOADWORKER", 1))
     with Pool(worker) as p:

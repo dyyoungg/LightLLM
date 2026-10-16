@@ -31,6 +31,7 @@ from ..models.qwen_vl.model import QWenVLTokenizer
 from ..models.qwen2_vl.model import QWen2VLTokenizer
 from ..models.internvl.model import InternvlTokenizer
 from ..models.gemma3.model import Gemma3Tokenizer
+from lightllm.common.veomni_utils import normalize_veomni_config
 
 # A fast LLaMA tokenizer with the pre-processed `tokenizer.json` file.
 _FAST_LLAMA_TOKENIZER = "hf-internal-testing/llama-tokenizer"
@@ -73,6 +74,7 @@ def get_tokenizer(
         logger.info("Using a slow tokenizer. This might cause a significant " "slowdown. Consider using a fast tokenizer instead.")
 
     model_cfg, _ = PretrainedConfig.get_config_dict(tokenizer_name)
+    model_cfg = normalize_veomni_config(model_cfg)
     model_type = model_cfg.get("model_type", "")
     if model_cfg["architectures"][0] == "TarsierForConditionalGeneration":
         from ..models.qwen2_vl.vision_process import Qwen2VLImageProcessor

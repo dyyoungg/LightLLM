@@ -1,8 +1,11 @@
-export PYTHONPATH="/mnt/afs/yangdeyu/dependency/lightllm-dev:$PYTHONPATH"
+export PYTHONPATH="/mnt/afs/yangdeyu/LightLLM:$PYTHONPATH"
+export LOADWORKER=4
+MODEL_DIR="${MODEL_DIR:-/mnt/afs/share/20260907_beebee_14B_veomni_28k}"
+export DISABLE_CHECK_MAX_LEN_INFER=1
 
-python -m lightllm.server.api_server \
+/usr/bin/python -m lightllm.server.api_server \
     --run_mode normal \
-    --model_dir /mnt/afs/share/llava_ckpt_404 \
+    --model_dir "$MODEL_DIR" \
     --max_req_total_len 8192 \
     --max_total_token_num 60000 \
     --cache_capacity 12000 \
@@ -16,7 +19,7 @@ python -m lightllm.server.api_server \
     --tp 1 \
     --nccl_port 28765 \
     --mem_fraction 0.9 \
-    --graph_max_batch_size 32 \
+    --graph_max_batch_size 2 \
     --graph_max_len_in_batch 8192 \
     --enable_multimodal \
     --visual_nccl_ports 29501 \
@@ -50,4 +53,4 @@ python -m lightllm.server.api_server \
 #     --graph_max_batch_size 4 \
 #     --graph_max_len_in_batch 8192 \
 #     --visual_gpu_ids 1 \
-#     --audio_gpu_ids 1 
+#     --audio_gpu_ids 1

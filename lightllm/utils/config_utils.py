@@ -17,14 +17,16 @@ def get_config_json(model_path: str):
 def get_hidden_size(model_path: str) -> Optional[int]:
     # try to get hidden_size in config.json
     config_json = get_config_json(model_path)
-    try:
-        hidden_size = config_json["hidden_size"]
-    except:
-        # for some multimodal model
-        try:
-            hidden_size = config_json["llm_config"]["hidden_size"]
-        except:
-            hidden_size = config_json.get("text_config", {}).get("hidden_size")
+    hidden_size = None
+    for cfg in (
+        config_json,
+        config_json.get("llm_config", {}),
+        config_json.get("text_config", {}),
+        config_json.get("foundation_config", {}),
+    ):
+        if isinstance(cfg, dict) and cfg.get("hidden_size") is not None:
+            hidden_size = cfg["hidden_size"]
+            break
 
     if isinstance(hidden_size, int):
         return hidden_size
@@ -36,24 +38,37 @@ def get_hidden_size(model_path: str) -> Optional[int]:
 @lru_cache(maxsize=None)
 def get_num_key_value_heads(model_path: str) -> int:
     config_json = get_config_json(model_path)
-    try:
-        num_key_value_heads = config_json["num_key_value_heads"]
-    except:
-        # for some multimodal model
-        num_key_value_heads = config_json["llm_config"]["num_key_value_heads"]
-    return num_key_value_heads
+    for cfg in (
+        config_json,
+        config_json.get("llm_config", {}),
+        config_json.get("text_config", {}),
+        config_json.get("foundation_config", {}),
+    ):
+        if isinstance(cfg, dict) and cfg.get("num_key_value_heads") is not None:
+            return cfg["num_key_value_heads"]
+    raise KeyError("cannot find num_key_value_heads in config.json")
 
 
 def get_eos_token_ids(model_path: str):
     config_json = get_config_json(model_path)
-    try:
-        eos_token_id = config_json["eos_token_id"]
-    except:
-        # for some multimode model.
-        try:
-            eos_token_id = config_json["llm_config"]["eos_token_id"]
-        except:
-            eos_token_id = config_json["text_config"]["eos_token_id"]
+    # Different multimodal checkpoints place the language model config at
+    # different nesting levels.  VeOmni stores it under ``foundation_config``
+    # and may keep a top-level ``eos_token_id`` with value ``null``.  Probe
+    # each supported location explicitly so that a valid token id of 0 is not
+    # treated as missing.
+    eos_token_id = None
+    for cfg in (
+        config_json,
+        config_json.get("llm_config", {}),
+        config_json.get("text_config", {}),
+        config_json.get("foundation_config", {}),
+    ):
+        if isinstance(cfg, dict) and cfg.get("eos_token_id") is not None:
+            eos_token_id = cfg["eos_token_id"]
+            break
+
+    if eos_token_id is None:
+        raise KeyError("cannot find eos_token_id in config.json")
 
     if isinstance(eos_token_id, int):
         return [eos_token_id]
@@ -75,13 +90,15 @@ def get_model_architectures(model_path: str):
 def get_vocab_size(model_path: str):
     try:
         config_json = get_config_json(model_path)
-        if "llm_config" in config_json:
-            vocab_size = int(config_json["llm_config"]["vocab_size"])
-            return vocab_size
-        vocab_size = config_json["vocab_size"]
-        if not isinstance(vocab_size, int):
-            vocab_size = int(vocab_size)
-        return vocab_size
+        for cfg in (
+            config_json,
+            config_json.get("llm_config", {}),
+            config_json.get("text_config", {}),
+            config_json.get("foundation_config", {}),
+        ):
+            if isinstance(cfg, dict) and cfg.get("vocab_size") is not None:
+                return int(cfg["vocab_size"])
+        raise KeyError("cannot find vocab_size in config.json")
     except:
         logger.error("can not get vocab_size from config.json, return 0")
         return 0
@@ -89,12 +106,19 @@ def get_vocab_size(model_path: str):
 
 def get_dtype(model_path: str):
     config_json = get_config_json(model_path)
-    try:
-        torch_dtype = config_json["torch_dtype"]
-        return torch_dtype
-    except:
-        logger.warning("torch_dtype not in config.json, use float16 as default")
-        return "float16"
+    for cfg in (
+        config_json,
+        config_json.get("llm_config", {}),
+        config_json.get("text_config", {}),
+        config_json.get("foundation_config", {}),
+    ):
+        if not isinstance(cfg, dict):
+            continue
+        torch_dtype = cfg.get("torch_dtype", cfg.get("dtype"))
+        if torch_dtype is not None:
+            return torch_dtype
+    logger.warning("torch_dtype not in config.json, use float16 as default")
+    return "float16"
 
 
 @lru_cache(maxsize=None)
